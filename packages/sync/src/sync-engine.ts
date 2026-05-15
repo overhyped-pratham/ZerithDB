@@ -126,11 +126,14 @@ export class SyncEngine extends EventEmitter<SyncEvents> {
 
   private encodeMessage(collectionName: string, update: Uint8Array): string {
     const nameBytes = new TextEncoder().encode(collectionName);
-    const header = new Uint8Array([nameBytes.length]);
-    const combined = new Uint8Array(1 + nameBytes.length + update.length);
+    // Use 2-byte big-endian header to support collection names up to 65535 bytes
+    const header = new Uint8Array(2);
+    header[0] = (nameBytes.length >> 8) & 0xff;
+    header[1] = nameBytes.length & 0xff;
+    const combined = new Uint8Array(2 + nameBytes.length + update.length);
     combined.set(header, 0);
-    combined.set(nameBytes, 1);
-    combined.set(update, 1 + nameBytes.length);
+    combined.set(nameBytes, 2);
+    combined.set(update, 2 + nameBytes.length);
     return bytesToBase64(combined);
   }
 
@@ -139,10 +142,12 @@ export class SyncEngine extends EventEmitter<SyncEvents> {
     update: Uint8Array;
   } | null {
     try {
-      const nameLen = bytes[0];
-      if (nameLen === undefined) return null;
-      const nameBytes = bytes.slice(1, 1 + nameLen);
-      const update = bytes.slice(1 + nameLen);
+      if (bytes.length < 2) return null;
+      // Read 2-byte big-endian name length
+      const nameLen = (bytes[0]! << 8) | bytes[1]!;
+      if (bytes.length < 2 + nameLen) return null;
+      const nameBytes = bytes.slice(2, 2 + nameLen);
+      const update = bytes.slice(2 + nameLen);
       return {
         collectionName: new TextDecoder().decode(nameBytes),
         update,
@@ -161,7 +166,13 @@ export class SyncEngine extends EventEmitter<SyncEvents> {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function bytesToBase64(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes));
+  // Process in chunks to avoid call-stack overflow on large payloads
+  const CHUNK_SIZE = 0x2000; // 8 KB
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK_SIZE));
+  }
+  return btoa(binary);
 }
 
 function base64ToBytes(b64: string): Uint8Array {

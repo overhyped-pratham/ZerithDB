@@ -90,17 +90,13 @@ export function createApp(config: ZerithDBConfig): ZerithDBApp {
   const network = new NetworkManager(resolvedConfig, auth);
   const sync = new SyncEngine(resolvedConfig, db, network);
 
-  const collectionCache = new Map<string, CollectionClient<any>>();
-
   return {
     config: Object.freeze(resolvedConfig),
 
     db<T extends Record<string, any>>(name: string): CollectionClient<T> {
-      if (!collectionCache.has(name)) {
-        collectionCache.set(name, db.collection(name));
-      }
-      // biome-ignore lint: cache guarantees this is defined
-      return collectionCache.get(name) as CollectionClient<T>;
+      // DbClient already caches collection instances internally —
+      // no need for a second cache layer here.
+      return db.collection<T>(name);
     },
 
     sync,
